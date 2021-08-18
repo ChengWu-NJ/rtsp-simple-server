@@ -18,7 +18,7 @@ var casesADTS = []struct {
 			{
 				SampleRate:   48000,
 				ChannelCount: 2,
-				Frame:        []byte{0xaa, 0xbb},
+				AU:           []byte{0xaa, 0xbb},
 			},
 		},
 	},
@@ -29,12 +29,12 @@ var casesADTS = []struct {
 			{
 				SampleRate:   44100,
 				ChannelCount: 1,
-				Frame:        []byte{0xaa, 0xbb},
+				AU:           []byte{0xaa, 0xbb},
 			},
 			{
 				SampleRate:   48000,
 				ChannelCount: 2,
-				Frame:        []byte{0xcc, 0xdd},
+				AU:           []byte{0xcc, 0xdd},
 			},
 		},
 	},

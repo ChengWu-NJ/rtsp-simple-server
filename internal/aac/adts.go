@@ -4,11 +4,43 @@ import (
 	"fmt"
 )
 
+const (
+	mpegAudioTypeAACLLC = 1
+	mpegAudioTypeAACSSR = 2
+)
+
+var sampleRates = []int{
+	96000,
+	88200,
+	64000,
+	48000,
+	44100,
+	32000,
+	24000,
+	22050,
+	16000,
+	12000,
+	11025,
+	8000,
+	7350,
+}
+
+var channelCounts = []int{
+	1,
+	2,
+	3,
+	4,
+	5,
+	6,
+	8,
+}
+
 // ADTSPacket is an ADTS packet
 type ADTSPacket struct {
+	Type         int
 	SampleRate   int
 	ChannelCount int
-	Frame        []byte
+	AU           []byte
 }
 
 // DecodeADTS decodes an ADTS stream into ADTS packets.
@@ -25,64 +57,36 @@ func DecodeADTS(byts []byte) ([]*ADTSPacket, error) {
 
 		protectionAbsent := byts[1] & 0x01
 		if protectionAbsent != 1 {
-			return nil, fmt.Errorf("ADTS with CRC is not supported")
+			return nil, fmt.Errorf("CRC is not supported")
 		}
 
 		pkt := &ADTSPacket{}
 
-		profile := (byts[2] >> 6)
-		if profile != 0 {
-			return nil, fmt.Errorf("only AAC-LC is supported")
+		pkt.Type = int((byts[2] >> 6) + 1)
+
+		switch pkt.Type {
+		case mpegAudioTypeAACLLC, mpegAudioTypeAACSSR:
+
+		default:
+			return nil, fmt.Errorf("unsupported object type: %d", pkt.Type)
 		}
 
 		sampleRateIndex := (byts[2] >> 2) & 0x0F
-		switch sampleRateIndex {
-		case 0:
-			pkt.SampleRate = 96000
-		case 1:
-			pkt.SampleRate = 88200
-		case 2:
-			pkt.SampleRate = 64000
-		case 3:
-			pkt.SampleRate = 48000
-		case 4:
-			pkt.SampleRate = 44100
-		case 5:
-			pkt.SampleRate = 32000
-		case 6:
-			pkt.SampleRate = 24000
-		case 7:
-			pkt.SampleRate = 22050
-		case 8:
-			pkt.SampleRate = 16000
-		case 9:
-			pkt.SampleRate = 12000
-		case 10:
-			pkt.SampleRate = 11025
-		case 11:
-			pkt.SampleRate = 8000
-		case 12:
-			pkt.SampleRate = 7350
+
+		switch {
+		case sampleRateIndex <= 12:
+			pkt.SampleRate = sampleRates[sampleRateIndex]
+
 		default:
 			return nil, fmt.Errorf("invalid sample rate index: %d", sampleRateIndex)
 		}
 
 		channelConfig := ((byts[2] & 0x01) << 2) | ((byts[3] >> 6) & 0x03)
-		switch channelConfig {
-		case 1:
-			pkt.ChannelCount = 1
-		case 2:
-			pkt.ChannelCount = 2
-		case 3:
-			pkt.ChannelCount = 3
-		case 4:
-			pkt.ChannelCount = 4
-		case 5:
-			pkt.ChannelCount = 5
-		case 6:
-			pkt.ChannelCount = 6
-		case 7:
-			pkt.ChannelCount = 8
+
+		switch {
+		case channelConfig >= 1 && channelConfig <= 7:
+			pkt.ChannelCount = channelCounts[channelConfig-1]
+
 		default:
 			return nil, fmt.Errorf("invalid channel configuration: %d", channelConfig)
 		}
@@ -91,10 +95,10 @@ func DecodeADTS(byts []byte) ([]*ADTSPacket, error) {
 			(uint16(byts[4])<<3)|
 			((uint16(byts[5])>>5)&0x07)) - 7
 
-		fullness := ((uint16(byts[5]) & 0x1F) << 6) | ((uint16(byts[6]) >> 2) & 0x3F)
-		if fullness != 1800 {
-			return nil, fmt.Errorf("fullness not supported")
-		}
+		//fullness := ((uint16(byts[5]) & 0x1F) << 6) | ((uint16(byts[6]) >> 2) & 0x3F)
+		//if fullness != 1800 {
+		//	return nil, fmt.Errorf("fullness not supported: %d", fullness)
+		//}
 
 		frameCount := byts[6] & 0x03
 		if frameCount != 0 {
@@ -105,7 +109,7 @@ func DecodeADTS(byts []byte) ([]*ADTSPacket, error) {
 			return nil, fmt.Errorf("invalid frame length")
 		}
 
-		pkt.Frame = byts[7 : 7+frameLen]
+		pkt.AU = byts[7 : 7+frameLen]
 		byts = byts[7+frameLen:]
 
 		ret = append(ret, pkt)
@@ -119,7 +123,7 @@ func EncodeADTS(pkts []*ADTSPacket) ([]byte, error) {
 	var ret []byte
 
 	for _, pkt := range pkts {
-		frameLen := len(pkt.Frame) + 7
+		frameLen := len(pkt.AU) + 7
 		fullness := 1800
 
 		var channelConf uint8
@@ -184,7 +188,7 @@ func EncodeADTS(pkts []*ADTSPacket) ([]byte, error) {
 		header[6] = uint8((fullness & 0x3F) << 2)
 		ret = append(ret, header...)
 
-		ret = append(ret, pkt.Frame...)
+		ret = append(ret, pkt.AU...)
 	}
 
 	return ret, nil
