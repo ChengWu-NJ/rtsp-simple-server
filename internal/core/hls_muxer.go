@@ -27,6 +27,8 @@ const (
 	closeAfterInactivity = 60 * time.Second
 )
 
+// change "https://cdn.jsdelivr.net/npm/hls.js@1.0.0" to "/hls.js"
+
 const index = `<!DOCTYPE html>
 <html>
 <head>
@@ -48,7 +50,7 @@ html, body {
 
 <video id="video" muted controls autoplay></video>
 
-<script src="https://cdn.jsdelivr.net/npm/hls.js@1.0.0"></script>
+<script src="/hls.js"></script>
 
 <script>
 
@@ -264,18 +266,34 @@ func (r *hlsMuxer) runInner(innerCtx context.Context, innerReady chan struct{}) 
 	var audioTrack *gortsplib.Track
 	audioTrackID := -1
 	var aacDecoder *rtpaac.Decoder
+	videoErrMsg := ""
 
 	for i, t := range res.Stream.tracks() {
-		if t.IsH264() {
-			if videoTrack != nil {
-				return fmt.Errorf("can't read track %d with HLS: too many tracks", i+1)
+		if t.Media.MediaName.Media == "video" {
+			if t.IsH264() {
+				if videoTrack != nil {
+					return fmt.Errorf("can't read track %d with HLS: too many tracks", i+1)
+				}
+
+				videoTrack = t
+				videoTrackID = i
+
+				h264Decoder = rtph264.NewDecoder()
+			} else {
+				v, ok := t.Media.Attribute("rtpmap")
+				if !ok {
+					videoErrMsg = `there is NO "rtpmap" attribute in DSP of a video track`
+					continue
+				}
+
+				vals := strings.Split(v, " ")
+				if len(vals) != 2 {
+					videoErrMsg = fmt.Sprintf(`got a wrong value [%s] of the "rtpmap" attribute in DSP of a video track`, v)
+					continue
+				}
+
+				videoErrMsg = fmt.Sprintf(`hls muxer only supports "H264/90000" video, but got a video track is "%s"`, vals[1])
 			}
-
-			videoTrack = t
-			videoTrackID = i
-
-			h264Decoder = rtph264.NewDecoder()
-
 		} else if t.IsAAC() {
 			if audioTrack != nil {
 				return fmt.Errorf("can't read track %d with HLS: too many tracks", i+1)
@@ -293,6 +311,10 @@ func (r *hlsMuxer) runInner(innerCtx context.Context, innerReady chan struct{}) 
 		}
 	}
 
+	if videoTrack == nil && videoErrMsg != "" {
+		r.log(logger.Warn, videoErrMsg)
+	}
+
 	if videoTrack == nil && audioTrack == nil {
 		return fmt.Errorf("the stream doesn't contain an H264 track or an AAC track")
 	}
@@ -303,6 +325,7 @@ func (r *hlsMuxer) runInner(innerCtx context.Context, innerReady chan struct{}) 
 		r.hlsSegmentDuration,
 		videoTrack,
 		audioTrack,
+		r.pathName,
 	)
 	if err != nil {
 		return err

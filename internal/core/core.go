@@ -15,7 +15,7 @@ import (
 	"github.com/aler9/rtsp-simple-server/internal/rlimit"
 )
 
-var version = "v0.0.0"
+var version = "v1.0-alpha"
 
 // Core is an instance of rtsp-simple-server.
 type Core struct {

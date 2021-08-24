@@ -23,7 +23,7 @@ func TestMuxer(t *testing.T) {
 	audioTrack, err := gortsplib.NewTrackAAC(97, &gortsplib.TrackConfigAAC{Type: 2, SampleRate: 44100, ChannelCount: 2})
 	require.NoError(t, err)
 
-	m, err := NewMuxer(3, 1*time.Second, videoTrack, audioTrack)
+	m, err := NewMuxer(3, 1*time.Second, videoTrack, audioTrack, "pathxxx")
 	require.NoError(t, err)
 	defer m.Close()
 
@@ -113,7 +113,7 @@ func TestMuxerCloseBeforeFirstSegment(t *testing.T) {
 	audioTrack, err := gortsplib.NewTrackAAC(97, &gortsplib.TrackConfigAAC{Type: 2, SampleRate: 44100, ChannelCount: 2})
 	require.NoError(t, err)
 
-	m, err := NewMuxer(3, 1*time.Second, videoTrack, audioTrack)
+	m, err := NewMuxer(3, 1*time.Second, videoTrack, audioTrack, "pathXXX")
 	require.NoError(t, err)
 
 	// group with IDR

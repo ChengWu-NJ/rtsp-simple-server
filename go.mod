@@ -19,4 +19,8 @@ require (
 	gopkg.in/yaml.v2 v2.2.8
 )
 
-replace github.com/notedit/rtmp => github.com/aler9/rtmp v0.0.0-20210403095203-3be4a5535927
+replace (
+	github.com/aler9/rtsp-simple-server => ./
+	github.com/aler9/gortsplib => ./gortsplib/
+	github.com/notedit/rtmp => github.com/aler9/rtmp v0.0.0-20210403095203-3be4a5535927
+)

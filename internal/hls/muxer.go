@@ -1,6 +1,7 @@
 package hls
 
 import (
+	"context"
 	"io"
 	"time"
 
@@ -34,6 +35,12 @@ type Muxer struct {
 	startPTS        time.Duration
 	primaryPlaylist *primaryPlaylist
 	streamPlaylist  *streamPlaylist
+
+	pathName      string
+	h264Decoder   *h264.H264Decoder
+	cancelH264Dcd context.CancelFunc
+	cancelTicker  context.CancelFunc
+	snapSignal    bool
 }
 
 // NewMuxer allocates a Muxer.
@@ -41,7 +48,8 @@ func NewMuxer(
 	hlsSegmentCount int,
 	hlsSegmentDuration time.Duration,
 	videoTrack *gortsplib.Track,
-	audioTrack *gortsplib.Track) (*Muxer, error) {
+	audioTrack *gortsplib.Track,
+	pathName string) (*Muxer, error) {
 	var h264Conf *gortsplib.TrackConfigH264
 	if videoTrack != nil {
 		var err error
@@ -60,6 +68,21 @@ func NewMuxer(
 		}
 	}
 
+	var avCtxExtradata [][]byte
+	avCtxExtradata = append(avCtxExtradata, h264Conf.SPS)
+	avCtxExtradata = append(avCtxExtradata, h264Conf.PPS)
+	encAvCtxExtradata, err := h264.EncodeAnnexB(avCtxExtradata)
+	if err != nil {
+		return nil, err
+	}
+
+	ctxH264Dcd, cancelH264Dcd := context.WithCancel(context.Background())
+	h264Dec, err := h264.NewH264Decoder(ctxH264Dcd, pathName, encAvCtxExtradata)
+	if err != nil {
+		cancelH264Dcd()
+		return nil, err
+	}
+
 	m := &Muxer{
 		hlsSegmentCount:    hlsSegmentCount,
 		hlsSegmentDuration: hlsSegmentDuration,
@@ -71,7 +94,26 @@ func NewMuxer(
 		currentSegment:     newSegment(videoTrack, audioTrack, h264Conf, aacConf),
 		primaryPlaylist:    newPrimaryPlaylist(videoTrack, audioTrack, h264Conf),
 		streamPlaylist:     newStreamPlaylist(hlsSegmentCount),
+		pathName:           pathName,
+		h264Decoder:        h264Dec,
+		cancelH264Dcd:      cancelH264Dcd,
+		snapSignal:         true,
 	}
+
+	ctxTicker, cancelTicker := context.WithCancel(context.Background())
+	ticker := time.NewTicker(h264.SNAPONEPERSECOND)
+	go func() {
+		for {
+			select {
+			case <-ticker.C:
+				m.snapSignal = true
+			case <-ctxTicker.Done():
+				ticker.Stop()
+				return
+			}
+		}
+	}()
+	m.cancelTicker = cancelTicker
 
 	return m, nil
 }
@@ -79,19 +121,48 @@ func NewMuxer(
 // Close closes a Muxer.
 func (m *Muxer) Close() {
 	m.streamPlaylist.close()
+	m.cancelH264Dcd()
+	m.cancelTicker()
 }
 
 // WriteH264 writes H264 NALUs, grouped by PTS, into the muxer.
 func (m *Muxer) WriteH264(pts time.Duration, nalus [][]byte) error {
-	idrPresent := func() bool {
-		for _, nalu := range nalus {
-			typ := h264.NALUType(nalu[0] & 0x1F)
-			if typ == h264.NALUTypeIDR {
-				return true
+	/*
+		idrPresent := func() bool {
+			for _, nalu := range nalus {
+				typ := h264.NALUType(nalu[0] & 0x1F)
+				if typ == h264.NALUTypeIDR {
+					return true
+				}
+			}
+			return false
+		}()
+	*/
+	idrPresent := false
+	for _, nalu := range nalus {
+		typ := h264.NALUType(nalu[0] & 0x1F)
+		if typ == h264.NALUTypeIDR {
+			idrPresent = true
+		}
+
+		if m.h264Decoder.InService() {
+			if (h264.SNAP_ALL_IDR || m.snapSignal) && (typ == h264.NALUTypeIDR) {
+				imgNalus := [][]byte{}
+				if !m.h264Decoder.IsInited() {
+					imgNalus = append(imgNalus, m.h264Conf.SPS)
+					imgNalus = append(imgNalus, m.h264Conf.PPS)
+				}
+				imgNalus = append(imgNalus, nalu)
+
+				encImgNalus, err := h264.EncodeAnnexB(imgNalus)
+				if err != nil {
+					return err
+				}
+				m.h264Decoder.GatherData(encImgNalus)
+				m.snapSignal = false
 			}
 		}
-		return false
-	}()
+	}
 
 	// skip group silently until we find one with a IDR
 	if !m.currentSegment.firstPacketWritten && !idrPresent {
